@@ -3,12 +3,11 @@ import platform
 import subprocess
 import threading
 import time
-import winreg
 
 from PyQt5.QtCore import (QTimer, QTime, Qt, QPoint, QPropertyAnimation,
                           QEasingCurve, QPointF, QParallelAnimationGroup, pyqtSignal, QDateTime)
 from PyQt5.QtGui import (QPainter, QColor, QPen, QPolygonF, QRadialGradient,
-                         QConicalGradient, QPalette, QIcon, QGuiApplication)
+                         QConicalGradient, QPalette, QIcon, QGuiApplication, QCursor)
 from PyQt5.QtWidgets import (QApplication, QWidget, QFrame, QLCDNumber,
                              QGridLayout, QHBoxLayout, QAction, QStyleFactory, qApp, QMenu, QSystemTrayIcon, QLabel,
                              QDialogButtonBox, QLineEdit, QSpinBox, QVBoxLayout, QGroupBox, QCheckBox, QWidgetAction,
@@ -16,114 +15,60 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QFrame, QLCDNumber,
 import images
 
 
-# 添加CPU占用控制类
-class CPULoadGenerator:
-    def __init__(self):
-        self.running = False
-        self.load_percent = 0
-        self.threads = []
-        self.stop_event = threading.Event()
-        self.lock = threading.Lock()
-        self.num_cores = os.cpu_count() or 1
-        self.adjustment_factor = 1.0  # 动态调整因子
-
-    def set_load(self, percent):
-        """设置总CPU占用百分比(0-100)"""
-        with self.lock:
-            # 计算每个核心需要的负载，考虑动态调整因子
-            target_load = max(0, min(100, percent))
-            self.load_percent = (target_load / self.num_cores) * self.adjustment_factor
-
-        if not self.running and percent > 0:
-            self.stop_event.clear()
-            self.running = True
-            # 为每个核心创建一个线程
-            self.threads = []
-            for _ in range(self.num_cores):
-                t = threading.Thread(target=self._generate_load)
-                t.daemon = True
-                t.start()
-                self.threads.append(t)
-        elif self.running and percent == 0:
-            self.stop_event.set()
-            self.running = False
-            for t in self.threads:
-                t.join(timeout=1)
-            self.threads = []
-
-    def _generate_load(self):
-        """改进的多核CPU负载生成方法"""
-        # 设置低优先级 (仅限Windows)
-        if platform.system() == 'Windows':
-            import win32api, win32process, win32con
-            handle = win32api.GetCurrentThread()
-            win32process.SetThreadPriority(handle, win32process.THREAD_PRIORITY_LOWEST)
-
-        last_time = time.time()
-        measured_load = 0
-
-        while not self.stop_event.is_set():
-            with self.lock:
-                target_load = self.load_percent
-
-            if target_load <= 0:
-                time.sleep(0.1)
-                continue
-
-            # 更精确的负载控制
-            interval = 0.05  # 50ms控制周期
-            busy_time = interval * (target_load / 100.0)
-            idle_time = interval - busy_time
-
-            # 忙等待
-            end_time = time.time() + busy_time
-            while time.time() < end_time and not self.stop_event.is_set():
-                pass
-
-            # 动态调整因子计算
-            if time.time() - last_time > 2:  # 每2秒校准一次
-                actual_load = measured_load / 2 * 100  # 转换为百分比
-                if actual_load > 0:
-                    with self.lock:
-                        if target_load > 5:  # 避免除零和小负载时的抖动
-                            self.adjustment_factor *= (target_load / actual_load)
-                            self.adjustment_factor = max(0.5, min(1.5, self.adjustment_factor))
-                last_time = time.time()
-                measured_load = 0
-
-            measured_load += busy_time
-
-            # 空闲等待
-            if idle_time > 0 and not self.stop_event.is_set():
-                time.sleep(idle_time)
-
 class DrawClock(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(90, 90)
-        self.setMaximumSize(90, 90)
-        # 背景色
-        self.bg_color = QColor(230, 230, 230, 220)
+        # Mac特定样式
+        if platform.system() == 'Darwin':
+            # 调整为更小的尺寸
+            self.setMinimumSize(60, 60)
+            self.setMaximumSize(60, 60)
+            self.bg_color = QColor(230, 230, 230, 220)
 
-        # 指针形状定义
-        self.hourHand = [
-            QPointF(4, 0),
-            QPointF(-4, 0),
-            QPointF(-4, -50),
-            QPointF(4, -50)
-        ]
-        self.minuteHand = [
-            QPointF(3, 0),
-            QPointF(-3, 0),
-            QPointF(-3, -80),
-            QPointF(3, -80)
-        ]
-        self.secondHand = [
-            QPointF(1, 0),
-            QPointF(-1, 0),
-            QPointF(-1, -100),
-            QPointF(1, -100)
-        ]
+            # 调整指针尺寸
+            self.hourHand = [
+                QPointF(3, 0),
+                QPointF(-3, 0),
+                QPointF(-3, -30),  # 缩短长度
+                QPointF(3, -30)
+            ]
+            self.minuteHand = [
+                QPointF(2, 0),
+                QPointF(-2, 0),
+                QPointF(-2, -45),
+                QPointF(2, -45)
+            ]
+            self.secondHand = [
+                QPointF(1, 0),
+                QPointF(-1, 0),
+                QPointF(-1, -50),
+                QPointF(1, -50)
+            ]
+        else:
+            self.setMinimumSize(90, 90)
+            self.setMaximumSize(90, 90)
+            # 背景色
+            self.bg_color = QColor(230, 230, 230, 220)
+
+            # 指针形状定义
+            self.hourHand = [
+                QPointF(4, 0),
+                QPointF(-4, 0),
+                QPointF(-4, -50),
+                QPointF(4, -50)
+            ]
+            self.minuteHand = [
+                QPointF(3, 0),
+                QPointF(-3, 0),
+                QPointF(-3, -80),
+                QPointF(3, -80)
+            ]
+            self.secondHand = [
+                QPointF(1, 0),
+                QPointF(-1, 0),
+                QPointF(-1, -100),
+                QPointF(1, -100)
+            ]
 
         self.time = QTime.currentTime()
 
@@ -137,7 +82,11 @@ class DrawClock(QWidget):
 
         # 居中坐标系
         painter.translate(self.width() / 2, self.height() / 2)
-        scale = min(self.width(), self.height()) / 220.0
+        # Mac特定样式
+        if platform.system() == 'Darwin':
+            scale = min(self.width(), self.height()) / 150.0
+        else:
+            scale = min(self.width(), self.height()) / 220.0  # 调整缩放比例
         painter.scale(scale, scale)
 
         # 绘制背景
@@ -155,14 +104,20 @@ class DrawClock(QWidget):
         self.draw_centre(painter)
 
     def draw_background(self, painter):
-        # # 径向渐变背景
-        radial = QRadialGradient(QPointF(0, 0), 110, QPointF(0, 0))
+        if platform.system() == 'Darwin':
+            # # 径向渐变背景
+            radial = QRadialGradient(QPointF(0, 0), 70, QPointF(0, 0))
+        else:
+            radial = QRadialGradient(QPointF(0, 0), 110, QPointF(0, 0))
         radial.setColorAt(1, QColor(230, 230, 230, 255))
         radial.setColorAt(0.9, QColor(230, 230, 230, 255))
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(radial)
-        painter.drawEllipse(QPointF(0, 0), 110, 110)
+        if platform.system() == 'Darwin':
+            painter.drawEllipse(QPointF(0, 0), 75, 75)  # 减小背景圆尺寸
+        else:
+            painter.drawEllipse(QPointF(0, 0), 110, 110)
 
     def draw_hour_hand(self, painter, time):
         painter.save()
@@ -256,6 +211,7 @@ class SettingsWindow(QWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.hide()  # ESC键隐藏窗口
+
     def save_settings(self):
         # 这里添加保存设置的逻辑
         settings = {
@@ -350,14 +306,13 @@ class SettingsWindow(QWidget):
         h_layout.addWidget(line_edit)
         layout.addLayout(h_layout)
 
+
 class PopupClockClass(QWidget):
 
     def __init__(self):
         super().__init__()
-        # 添加CPU负载生成器
-        self.cpu_load = CPULoadGenerator()
 
-        self.registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        # self.registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         # 修改设置窗口实例化方式
         self.settings_window = None  # 延迟初始化设置窗口
         self.current_settings = {
@@ -368,7 +323,7 @@ class PopupClockClass(QWidget):
 
         self.suppressed_period = None  # 抑制的时间段类型：'hour'或'half'
         self.dragged_pos = None  # 新增：存储拖动后的位置
-        self.debug_mode = False # 默认关闭调试模式
+        self.debug_mode = False  # 默认关闭调试模式
         self.first_run = True  # 添加首次启动标志
 
         self.load_settings()
@@ -382,18 +337,19 @@ class PopupClockClass(QWidget):
         self.setup_timer()
         self.setup_animation()
         self.update_display()
-        # 样式调整
-        self.setStyleSheet("""
+
+        # Mac特定样式
+        if platform.system() == 'Darwin':
+            self.setStyleSheet("""
                    QFrame#frame1 {
                        background: qradialgradient(
                            cx:0.5, cy:0.5, radius: 2,
                            fx:0.5, fy:0.5,
-                           stop:0 rgba(189, 189, 189, 255),
-                           stop:1 rgba(150, 150, 150, 200)
-                    
+                         stop:0 rgba(189, 189, 189, 255),
+                               stop:1 rgba(150, 150, 150, 200)
                        );
-                       border-radius:22px;
-                       border: 1px solid rgba(255,255,255,100);
+                          border-radius:22px;
+                           border: 1px solid rgba(255,255,255,100);
                    }
                    QFrame#frame_3 {
                        background-color:rgba(230, 230, 230, 220);
@@ -405,12 +361,43 @@ class PopupClockClass(QWidget):
                        color: #111;
                        min-width: 120px;
                        qproperty-segmentStyle: Flat;
-                       font: bold 18px 'Arial Black'; 
+                       font: bold 18px 'Helvetica'; 
                    }
                """)
+        else:
+            # 样式调整
+            self.setStyleSheet("""
+                       QFrame#frame1 {
+                           background: qradialgradient(
+                               cx:0.5, cy:0.5, radius: 2,
+                               fx:0.5, fy:0.5,
+                               stop:0 rgba(189, 189, 189, 255),
+                               stop:1 rgba(150, 150, 150, 200)
+
+                           );
+                           border-radius:22px;
+                           border: 1px solid rgba(255,255,255,100);
+                       }
+                       QFrame#frame_3 {
+                           background-color:rgba(230, 230, 230, 220);
+                           border-radius:22px;
+                           border: 1px solid rgba(0,0,0,30);
+                       }
+                       QLCDNumber {
+                           background:transparent;
+                           color: #111;
+                           min-width: 120px;
+                           qproperty-segmentStyle: Flat;
+                           font: bold 18px 'Arial Black'; 
+                       }
+                   """)
+
         # 窗口初始位置（左侧屏幕外）
         self.screen_geo = QApplication.primaryScreen().availableGeometry()
-        self.window_width = 450  # 与resize保持一致
+        if platform.system() == 'Darwin':
+            self.window_width = 300  # 与resize保持一致
+        else:
+            self.window_width = 450  # 与resize保持一致
         self.init_pos = QPoint(-self.window_width, 0)  # 初始隐藏在左侧外
         self.show_pos = QPoint(0, 0)  # 显示在左上角
         self.move(self.init_pos)  # 初始位置
@@ -432,38 +419,72 @@ class PopupClockClass(QWidget):
         self.double_click_timer.setSingleShot(True)
         self.double_click_timer.timeout.connect(self.check_double_click)
 
+        self.adjust_for_macos()  # 新增方法
+        # macOS 特殊处理
+        # if platform.system() == 'Darwin':
+        #     # 统一设置窗口标志（关键修改）
+        #     self.setWindowFlags(
+        #         Qt.FramelessWindowHint |
+        #         Qt.WindowStaysOnTopHint |
+        #         Qt.Tool |
+        #         Qt.BypassWindowManagerHint
+        #     )
+        #     self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        #     self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+        #     self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)  # macOS 专用属性
+        # else:
+        #     # 设置窗口标志 - 关键修改
+        #     self.setWindowFlags(
+        #         Qt.FramelessWindowHint |
+        #         Qt.WindowStaysOnTopHint |
+        #         Qt.Tool  # 最重要的标志，隐藏任务栏图标
+        #     )
 
-        # 设置窗口标志 - 关键修改
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool  # 最重要的标志，隐藏任务栏图标
+    def adjust_for_macos(self):
+        """处理 macOS 的屏幕坐标系问题"""
+        if platform.system() != 'Darwin':
+            return
+
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.availableGeometry()
+
+        # 修正显示位置为屏幕左上角可用区域
+        self.show_pos = QPoint(
+            screen_geo.x() + 20,  # 留出 20px 边距
+            screen_geo.y() + 40  # 留出菜单栏下方空间
         )
 
-    def check_autostart(self):
-        """检查是否已设置自启动"""
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.registry_path, 0, winreg.KEY_READ)
-        try:
-            value, _ = winreg.QueryValueEx(key, "PopupClock")
-            return os.path.exists(value)
-        except FileNotFoundError:
-            return False
-        finally:
-            key.Close()
+        # 修正初始位置计算
+        self.init_pos = QPoint(
+            self.show_pos.x() - self.window_width,
+            self.show_pos.y()
+        )
+        self.move(self.init_pos)
 
-    def set_autostart(self, enable):
-        """设置/取消自启动"""
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.registry_path, 0, winreg.KEY_SET_VALUE)
-        app_path = os.path.abspath(sys.argv[0])
+    # def check_autostart(self):
+    #     """检查是否已设置自启动"""
+    #     key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.registry_path, 0, winreg.KEY_READ)
+    #     try:
+    #         value, _ = winreg.QueryValueEx(key, "PopupClock")
+    #         return os.path.exists(value)
+    #     except FileNotFoundError:
+    #         return False
+    #     finally:
+    #         key.Close()
 
-        with key:
-            if enable:
-                winreg.SetValueEx(key, "PopupClock", 0, winreg.REG_SZ, app_path)
-            else:
-                try:
-                    winreg.DeleteValue(key, "PopupClock")
-                except FileNotFoundError:
-                    pass
+    # def set_autostart(self, enable):
+    #     """设置/取消自启动"""
+    #     key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.registry_path, 0, winreg.KEY_SET_VALUE)
+    #     app_path = os.path.abspath(sys.argv[0])
+    #
+    #     with key:
+    #         if enable:
+    #             winreg.SetValueEx(key, "PopupClock", 0, winreg.REG_SZ, app_path)
+    #         else:
+    #             try:
+    #                 winreg.DeleteValue(key, "PopupClock")
+    #             except FileNotFoundError:
+    #                 pass
     def load_settings(self):
         # 示例加载设置
         self.debug_mode = False
@@ -497,7 +518,7 @@ class PopupClockClass(QWidget):
 
     def handle_double_click(self):
         """处理双击事件 - 立即启动退出动画"""
-        print("双击事件debug状态："+str(self.debug_mode) + "显示状态："+str(self.anim_state))
+        print("双击事件debug状态：" + str(self.debug_mode) + "显示状态：" + str(self.anim_state))
 
         if not self.debug_mode and self.anim_state == 1:  # 只在显示状态下且非调试模式时响应
             self.start_exit_animation()
@@ -505,7 +526,7 @@ class PopupClockClass(QWidget):
             current_min = current_time.minute()
             current_sec = current_time.second()
             # 判断当前时间段类型
-            if (current_min ==59 and current_sec >= 30) or (current_min == 0 and current_sec < 30):
+            if (current_min == 59 and current_sec >= 30) or (current_min == 0 and current_sec < 30):
                 self.suppressed_period = 'hour'
             elif (current_min == 29 and current_sec >= 30) or (current_min == 30 and current_sec < 30):
                 self.suppressed_period = 'half'
@@ -517,6 +538,7 @@ class PopupClockClass(QWidget):
             self.first_run = False
             # 启动首次显示序列
             self.start_initial_sequence()
+
     def start_initial_sequence(self):
         """首次启动时的隐藏动画"""
         # 确保当前不是调试模式
@@ -550,7 +572,15 @@ class PopupClockClass(QWidget):
     def setup_tray_icon(self):
         # 创建系统托盘图标
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon(":/touxiang.ico"))  # 准备一个ico图标文件
+
+        # Mac上使用.icns格式图标
+        if platform.system() == 'Darwin':
+            icon_path = ":/touxiang.icns"  # 需要准备icns格式的图标
+        else:
+            icon_path = ":/touxiang.ico"
+
+        # self.tray_icon.setIcon(QIcon(":/touxiang.ico"))  # 准备一个ico图标文件
+        self.tray_icon.setIcon(QIcon(icon_path))  # 准备一个ico图标文件
         self.tray_icon.setToolTip("我的时钟")
 
         # 创建右键菜单
@@ -567,47 +597,73 @@ class PopupClockClass(QWidget):
         always_show_action.toggled.connect(self.toggle_always_show)
 
         # 添加自启动菜单项
-        self.auto_start_action = QAction("开机自启动", self, checkable=True)
-        self.auto_start_action.setChecked(self.check_autostart())
-        self.auto_start_action.toggled.connect(self.set_autostart)
-        tray_menu.insertAction(setting_action, self.auto_start_action)
+        # self.auto_start_action = QAction("开机自启动", self, checkable=True)
+        # self.auto_start_action.setChecked(self.check_autostart())
+        # self.auto_start_action.toggled.connect(self.set_autostart)
+        # tray_menu.insertAction(setting_action, self.auto_start_action)
 
         # 添加CPU占用控制菜单
-        cpu_menu = tray_menu.addMenu("CPU占用控制")
+        # cpu_menu = tray_menu.addMenu("CPU占用控制")
 
         # 添加滑块控制
-        slider_action = QWidgetAction(cpu_menu)
-        slider_widget = QWidget()
-        slider_layout = QVBoxLayout()
+        # slider_action = QWidgetAction(cpu_menu)
+        # slider_widget = QWidget()
+        # slider_layout = QVBoxLayout()
 
-        self.cpu_slider = QSlider(Qt.Horizontal)
-        self.cpu_slider.setRange(0, 100)
-        self.cpu_slider.setValue(0)
-        self.cpu_slider.valueChanged.connect(self.set_cpu_load)
+        # self.cpu_slider = QSlider(Qt.Horizontal)
+        # self.cpu_slider.setRange(0, 100)
+        # self.cpu_slider.setValue(0)
+        # self.cpu_slider.valueChanged.connect(self.set_cpu_load)
 
-        self.cpu_label = QLabel("0%")
-        self.cpu_label.setAlignment(Qt.AlignCenter)
+        # self.cpu_label = QLabel("0%")
+        # self.cpu_label.setAlignment(Qt.AlignCenter)
 
-        slider_layout.addWidget(self.cpu_slider)
-        slider_layout.addWidget(self.cpu_label)
-        slider_widget.setLayout(slider_layout)
-        slider_action.setDefaultWidget(slider_widget)
-        cpu_menu.addAction(slider_action)
+        # slider_layout.addWidget(self.cpu_slider)
+        # slider_layout.addWidget(self.cpu_label)
+        # slider_widget.setLayout(slider_layout)
+        # slider_action.setDefaultWidget(slider_widget)
+        # cpu_menu.addAction(slider_action)
 
         # 添加预设值
-        for percent in [0, 25, 50, 75, 100]:
-            action = QAction(f"{percent}%", self)
-            action.triggered.connect(lambda checked, p=percent: self.set_cpu_load(p))
-            cpu_menu.addAction(action)
+        # for percent in [0, 25, 50, 75, 100]:
+        #     action = QAction(f"{percent}%", self)
+        #     action.triggered.connect(lambda checked, p=percent: self.set_cpu_load(p))
+        #     cpu_menu.addAction(action)
 
-        tray_menu.addAction(setting_action)
-        tray_menu.addAction(always_show_action)  # 插入到退出按钮前
-        tray_menu.addAction(exit_action)
+        # Mac特殊处理：需要显式显示菜单
+        if platform.system() == 'Darwin':
+            # 创建父级菜单项
+            main_action = QAction("操作菜单", self)
+            tray_menu.addAction(main_action)
+
+            # 创建子菜单
+            sub_menu = QMenu()
+            sub_menu.addAction(setting_action)
+            sub_menu.addAction(always_show_action)
+            # sub_menu.addSeparator()
+            sub_menu.addAction(exit_action)
+
+            # 设置菜单关系
+            main_action.setMenu(sub_menu)
+
+            # 设置点击主图标触发菜单
+            self.tray_icon.activated.connect(lambda r: sub_menu.popup(QCursor.pos())
+            if r == QSystemTrayIcon.Trigger else None)
+        else:
+            # Windows/Linux的正常菜单
+            tray_menu.addAction(setting_action)
+            tray_menu.addAction(always_show_action)  # 插入到退出按钮前
+            tray_menu.addAction(exit_action)
+            # tray_menu.addSeparator()
+
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
 
         # 托盘图标点击事件
         self.tray_icon.activated.connect(self.on_tray_activated)
+        # 修复Mac下的菜单触发问题
+        # self.tray_icon.activated.connect(lambda reason:
+        #                                  self.on_tray_activated(reason) if reason == QSystemTrayIcon.Trigger else None)
 
     def set_cpu_load(self, percent):
         """设置CPU占用百分比"""
@@ -704,20 +760,34 @@ class PopupClockClass(QWidget):
             except:
                 pass
             self.start_enter_animation()
+
     def setup_ui(self):
 
+        # 调整Mac平台下的尺寸
+        if platform.system() == 'Darwin':
+            self.resize(300, 80)  # 更紧凑的尺寸
+            self.window_width = 300
+        else:
+            self.resize(450, 150)
+            self.window_width = 450
         # 尺寸调整
-        self.resize(450, 150)
+        # self.resize(450, 150)
 
         # 主布局
         self.gridLayout = QGridLayout(self)
-        self.gridLayout.setContentsMargins(20, 20, 20, 20)
+        if platform.system() == 'Darwin':
+            self.gridLayout.setContentsMargins(10, 10, 10, 10)
+        else:
+            self.gridLayout.setContentsMargins(20, 20, 20, 20)
 
         # 背景框架
         self.frame1 = QFrame()
         self.frame1.setObjectName("frame1")
         self.horizontalLayout = QHBoxLayout(self.frame1)
-        self.horizontalLayout.setContentsMargins(20, 20, 20, 20)
+        if platform.system() == 'Darwin':
+            self.horizontalLayout.setContentsMargins(10, 10, 10, 10)
+        else:
+            self.horizontalLayout.setContentsMargins(20, 20, 20, 20)
 
         # 添加时钟部件
         self.clock_widget = DrawClock()
@@ -732,15 +802,46 @@ class PopupClockClass(QWidget):
         self.lcdNumber.setSegmentStyle(QLCDNumber.Flat)
         self.gridLayout_3.addWidget(self.lcdNumber)
 
+        if platform.system() == 'Darwin':
+            self.lcdNumber.setStyleSheet("font: bold 18px 'Helvetica';")
         self.horizontalLayout.addWidget(self.frame_3)
         self.gridLayout.addWidget(self.frame1)
 
         self.lcdNumber.setAttribute(Qt.WA_AlwaysShowToolTips)  # 强制渲染优化
         self.lcdNumber.setStyle(QStyleFactory.create("Fusion"))  # 使用更现代的样式引擎
-
-        # 无边框设置
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # macOS 特殊处理
+        if platform.system() == 'Darwin':
+            # 统一设置窗口标志（关键修改）
+            self.setWindowFlags(
+                Qt.FramelessWindowHint |
+                Qt.WindowStaysOnTopHint |
+                Qt.Tool |
+                Qt.BypassWindowManagerHint
+            )
+            self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+            self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)  # macOS 专用属性
+        else:
+            # 设置窗口标志 - 关键修改
+            self.setWindowFlags(
+                Qt.FramelessWindowHint |
+                Qt.WindowStaysOnTopHint |
+                Qt.Tool  # 最重要的标志，隐藏任务栏图标
+            )
+        # # 添加 macOS 特定属性
+        # if platform.system() == 'Darwin':
+        #     self.setWindowFlags(
+        #         Qt.FramelessWindowHint |
+        #         Qt.WindowStaysOnTopHint |
+        #         Qt.Tool |
+        #         Qt.BypassWindowManagerHint
+        #     )
+        #     self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        #     self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+        #     self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)  # macOS 专用属性
+        # else:
+        #     self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        #     self.setAttribute(Qt.WA_TranslucentBackground)
 
         self.setWindowTitle("PopupClock")
 
@@ -785,6 +886,7 @@ class PopupClockClass(QWidget):
         self.exit_anim_group.addAnimation(self.exit_opacity_anim)
 
         self.anim_state = 0  # 0:隐藏 1:显示 2:动画中
+
     def update_display(self):
         # 在时间条件判断前检查动画状态
         if self.anim_state == 2:
@@ -808,7 +910,6 @@ class PopupClockClass(QWidget):
         current_min = current_time.minute()
         current_sec = current_time.second()
 
-
         in_window = False
         current_period = None
         # 检查整点窗口（如07:59:30-08:00:30）
@@ -826,7 +927,6 @@ class PopupClockClass(QWidget):
         # 不在时间段时重置抑制
         elif not in_window and current_min not in [59, 0, 29, 30]:
             self.suppressed_period = None
-
 
         # print("当前状态：" + str(in_window) + "当前current_period：" + str(current_period) + ":" + str(self.suppressed_period))
         # print("当前状态：" + str(in_window) + "当前时间：" + str(current_min) + ":" + str(current_sec) + "状态" + str(self.anim_state))
@@ -858,7 +958,6 @@ class PopupClockClass(QWidget):
                     # 启动退出动画
                     self.start_exit_animation()
 
-
     def start_enter_animation(self):
         # 停止所有正在运行的动画
         if self.enter_anim_group.state() == QPropertyAnimation.Running:
@@ -875,12 +974,23 @@ class PopupClockClass(QWidget):
         except:
             pass
 
-        # 确定目标位置
-        if self.dragged_pos is not None:
-            target_pos = self.dragged_pos
-        else:
-            target_pos = self.show_pos  # 默认位置
+        self.raise_()
+
+        # 修改目标位置获取方式
+        target_pos = self.show_pos if self.dragged_pos is None else self.dragged_pos
+        # # 确定目标位置
+        # if self.dragged_pos is not None:
+        #     target_pos = self.dragged_pos
+        # else:
+        #     target_pos = self.show_pos  # 默认位置
         # 计算起始位置
+        # 调试打印（完成后可删除）
+        # print(f"""
+        #    [DEBUG] Enter Animation Positions:
+        #    Screen: {QApplication.primaryScreen().availableGeometry()}
+        #    Target: {target_pos}
+        #    Window Size: {self.size()}
+        #    """)
         start_x = target_pos.x() - self.window_width
         start_pos = QPoint(start_x, target_pos.y())
 
@@ -893,10 +1003,6 @@ class PopupClockClass(QWidget):
         self.enter_anim_group.finished.connect(
             lambda: self.set_anim_state(1)
         )
-        # self.enter_anim_group.finished.connect(
-        #     # 添加回调并打印调试信息
-        #         lambda: [setattr(self, 'anim_state', 1), print("Enter动画完成，状态设为1")]
-        #     )
 
     def start_exit_animation(self):
         # 停止所有正在运行的动画
@@ -972,17 +1078,31 @@ class PopupClockClass(QWidget):
             event.accept()
 
     def mouseReleaseEvent(self, event):
+        # self.dragging = False
+        # self.dragged_pos = self.pos()  # 新增：记录拖动后的位置
+        # event.accept()
+
         self.dragging = False
-        self.dragged_pos = self.pos()  # 新增：记录拖动后的位置
+        # 记录新位置时考虑屏幕偏移
+        screen_geo = QApplication.primaryScreen().availableGeometry()
+        new_pos = self.pos()
+
+        # 确保不会移出屏幕可见区域
+        new_pos.setX(max(screen_geo.x(), new_pos.x()))
+        new_pos.setY(max(screen_geo.y() + 40, new_pos.y()))  # 保持低于菜单栏
+
+        self.dragged_pos = new_pos
+        self.move(new_pos)  # 立即应用修正后的位置
         event.accept()
 
 
 if __name__ == "__main__":
     import sys
 
-    QApplication.setAttribute(Qt.AA_UseDesktopOpenGL)  # 启用硬件加速
+    # QApplication.setAttribute(Qt.AA_UseDesktopOpenGL)  # 启用硬件加速
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(":/touxiang.ico"))  # 关键：设置应用全局图标
     window = PopupClockClass()
     window.show()
+
     sys.exit(app.exec_())
